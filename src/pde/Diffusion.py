@@ -1,4 +1,4 @@
-from src.model.PINN import *
+from src.model.PINN_dyn_weight import *
 
 def pde1(x, y):
 
