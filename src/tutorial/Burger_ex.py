@@ -4,10 +4,11 @@ from src.model.PINN_vanilla import PINN
 from src.sampling.LHS import LHS
 from src.pde.Burger import Burger
 from src.sampling.RAR import RAR
+from src.sampling.Uniform import Uniform
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-
+from scipy.integrate import odeint
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -79,120 +80,120 @@ optimizer_RAR = torch.optim.Adam(net_RAR.parameters(), lr=0.001)
 PINN_RAR = PINN(net_RAR, domain_bound, data, pde, bcic, bc_n, device)
 PINN_RAR.compile(optimizer_RAR)
 
-RAR_model = RAR(N=4000, m=100, sampling="Uniform")
+RAR_model = RAR(tested_pts=4000, added_pts=100, sampling="Uniform")
 
+def Burger_FFT():
+
+
+	# https://github.com/sachabinder/Burgers_equation_simulation/blob/main/Burgers_solver_SP.py
+	############## SET-UP THE PROBLEM ###############
+
+	mu = 1
+	nu = 0.01 / np.pi  # kinematic viscosity coefficient
+
+	# Spatial mesh
+	x_max, x_min = 1, -1  # Range of the domain according to x [m]
+	dx = 0.001  # Infinitesimal distance
+	N_x = int((x_max - x_min) / dx)  # Points number of the spatial mesh
+	X = np.linspace(x_min, x_max, N_x)  # Spatial array
+
+	# Temporal mesh
+	L_t = 1  # Duration of simulation [s]
+	dt = 0.001  # Infinitesimal time
+	N_t = int(L_t / dt)  # Points number of the temporal mesh
+	T = np.linspace(0, L_t, N_t)  # Temporal array
+
+	# Wave number discretization
+	k = 2 * np.pi * np.fft.fftfreq(N_x, d=dx)
+
+	# Def of the initial condition
+	u0 = -np.sin(np.pi * X)  # Single space variable fonction that represent the wave form at t = 0
+
+	# viz_tools.plot_a_frame_1D(X,u0,0,L_x,0,1.2,'Initial condition')
+
+	############## EQUATION SOLVING ###############
+
+	# Definition of ODE system (PDE ---(FFT)---> ODE system)
+	def burg_system(u, t, k, mu, nu):
+		# Spatial derivative in the Fourier domain
+		u_hat = np.fft.fft(u)
+		u_hat_x = 1j * k * u_hat
+		u_hat_xx = -k ** 2 * u_hat
+
+		# Switching in the spatial domain
+		u_x = np.fft.ifft(u_hat_x)
+		u_xx = np.fft.ifft(u_hat_xx)
+
+		# ODE resolution
+		u_t = -mu * u * u_x + nu * u_xx
+		return u_t.real
+
+	# PDE resolution (ODE system resolution)
+	U = odeint(burg_system, u0, T, args=(k, mu, nu,), mxstep=5000).T
+	return X, U, N_t
+
+X, U, N_t = Burger_FFT()
 # Train loop
 # for epoch in range(Adam_epochs):
 # PINN.train(epochs=Adam_epochs, history=1000)
+def Burger_plt(PINN, test_data):
+	plt.figure(dpi=300)
+	test_resi = 200
+	for t__ in [0, 0.2, 0.4, 0.6, 0.8, 1]:
+		x_test = np.linspace(-1, 1, test_resi)
+		t_test = np.ones_like(x_test) * t__
+		x_test, t_test = torch.tensor(x_test).to(device), torch.tensor(t_test).to(device)
+		x_test_ = torch.concat([(x_test.reshape(-1, 1)).float(), (t_test.reshape(-1, 1)).float()], dim=1)
+		u_ = PINN.predict(x_test_).cpu().detach().numpy()
+		plt.plot(x_test.cpu(), u_, 'r')
+		if t__ != 1:
+			plt.plot(X, U[:, int(t__ * N_t)], '--k')
+		else:
+			plt.plot(X, U[:, -1], '--k')
+	# plt.show()
+	print(f"Test loss: {torch.mean(PINN.cal_pde_loss(test_data)).cpu().detach().numpy()}")
 
+epoch_multiply = 1000
+test_data = torch.tensor(Uniform(domain_bound, 10000)).float().to(device)
 """
 Vanilla 10000번 돌리기
 """
-PINN_vanilla.train(epochs=20000, history=1000)
-PINN_vanilla.train(L_BFGS=L_BFGS_epochs, history=1000)
+print("PINN vanilla starts")
+PINN_vanilla.train(epochs=20*epoch_multiply, adaptive=None)
+Burger_plt(PINN_vanilla, test_data)
+PINN_vanilla.train(epochs=3*epoch_multiply, L_BFGS=True, adaptive=None)
+Burger_plt(PINN_vanilla, test_data)
 # PINN_vanilla.train(epochs=0, history=1000, adaptive=RAR_model)
 
 """
 Vanilla 5000번 돌리고 RAR로 1000번씩 5번 돌리기
 """
-PINN_RAR.train(epochs=5000, history=1000)
-PINN_RAR.train(epochs=3000, history=1000, adaptive=RAR_model)
-PINN_RAR.train(epochs=3000, history=1000, adaptive=RAR_model)
-PINN_RAR.train(epochs=3000, history=1000, adaptive=RAR_model)
-PINN_RAR.train(epochs=3000, history=1000, adaptive=RAR_model)
-PINN_RAR.train(epochs=3000, history=1000, adaptive=RAR_model)
-# PINN_RAR.train(epochs=5, history=1000)
-# PINN_RAR.train(epochs=1, history=1000, adaptive=RAR_model)
-# PINN_RAR.train(epochs=1, history=1000, adaptive=RAR_model)
-# PINN_RAR.train(epochs=1, history=1000, adaptive=RAR_model)
-# PINN_RAR.train(epochs=1, history=1000, adaptive=RAR_model)
-# PINN_RAR.train(epochs=1, history=1000, adaptive=RAR_model)
-PINN_RAR.train(L_BFGS=L_BFGS_epochs, history=1000)
+print("PINN RAR starts")
+PINN_RAR.train(epochs=5*epoch_multiply, adaptive=None)
+Burger_plt(PINN_RAR, test_data)
+PINN_RAR.train(epochs=3*epoch_multiply, adaptive=RAR_model)
+Burger_plt(PINN_RAR, test_data)
+PINN_RAR.train(epochs=3*epoch_multiply, adaptive=RAR_model)
+Burger_plt(PINN_RAR, test_data)
+PINN_RAR.train(epochs=3*epoch_multiply, adaptive=RAR_model)
+Burger_plt(PINN_RAR, test_data)
+PINN_RAR.train(epochs=3*epoch_multiply, adaptive=RAR_model)
+Burger_plt(PINN_RAR, test_data)
+PINN_RAR.train(epochs=3*epoch_multiply, adaptive=RAR_model)
+Burger_plt(PINN_RAR, test_data)
+PINN_RAR.train(epochs=3*epoch_multiply, L_BFGS=True, adaptive=None)
+Burger_plt(PINN_RAR, test_data)
+
+# test_data = Uniform(domain_bound, 10000)
+print(f"PINN_vanilla: {torch.mean(PINN_vanilla.cal_pde_loss(test_data)).cpu().detach().numpy()}")
+print(f"PINN_RAR: {torch.mean(PINN_RAR.cal_pde_loss(test_data)).cpu().detach().numpy()}")
 
 
 
-from scipy.integrate import odeint
 
-# https://github.com/sachabinder/Burgers_equation_simulation/blob/main/Burgers_solver_SP.py
-############## SET-UP THE PROBLEM ###############
-
-mu = 1
-nu = 0.01 / np.pi  # kinematic viscosity coefficient
-
-# Spatial mesh
-x_max, x_min = 1, -1  # Range of the domain according to x [m]
-dx = 0.001  # Infinitesimal distance
-N_x = int((x_max - x_min) / dx)  # Points number of the spatial mesh
-X = np.linspace(x_min, x_max, N_x)  # Spatial array
-
-# Temporal mesh
-L_t = 1  # Duration of simulation [s]
-dt = 0.001  # Infinitesimal time
-N_t = int(L_t / dt)  # Points number of the temporal mesh
-T = np.linspace(0, L_t, N_t)  # Temporal array
-
-# Wave number discretization
-k = 2 * np.pi * np.fft.fftfreq(N_x, d=dx)
-
-# Def of the initial condition
-u0 = -np.sin(np.pi * X)  # Single space variable fonction that represent the wave form at t = 0
-
-
-# viz_tools.plot_a_frame_1D(X,u0,0,L_x,0,1.2,'Initial condition')
-
-############## EQUATION SOLVING ###############
-
-# Definition of ODE system (PDE ---(FFT)---> ODE system)
-def burg_system(u, t, k, mu, nu):
-	# Spatial derivative in the Fourier domain
-	u_hat = np.fft.fft(u)
-	u_hat_x = 1j * k * u_hat
-	u_hat_xx = -k ** 2 * u_hat
-
-	# Switching in the spatial domain
-	u_x = np.fft.ifft(u_hat_x)
-	u_xx = np.fft.ifft(u_hat_xx)
-
-	# ODE resolution
-	u_t = -mu * u * u_x + nu * u_xx
-	return u_t.real
-
-
-# PDE resolution (ODE system resolution)
-U = odeint(burg_system, u0, T, args=(k, mu, nu,), mxstep=5000).T
-
-test_resi = 200
-
-plt.figure(dpi=300)
-for t__ in [0, 0.2, 0.4, 0.6, 0.8, 1]:
-	x_test = np.linspace(-1, 1, test_resi)
-	t_test = np.ones_like(x_test) * t__
-	x_test, t_test = torch.tensor(x_test).to(device), torch.tensor(t_test).to(device)
-	x_test_ = torch.concat([(x_test.reshape(-1, 1)).float(), (t_test.reshape(-1, 1)).float()], dim=1)
-	u_ = PINN_vanilla.predict(x_test_).cpu().detach().numpy()
-	plt.plot(x_test.cpu(), u_, 'r')
-	if t__ != 1:
-		plt.plot(X, U[:, int(t__ * N_t)], '--k')
-	else:
-		plt.plot(X, U[:, -1], '--k')
-plt.show()
-
-plt.figure(dpi=300)
-for t__ in [0, 0.2, 0.4, 0.6, 0.8, 1]:
-	x_test = np.linspace(-1, 1, test_resi)
-	t_test = np.ones_like(x_test) * t__
-	x_test, t_test = torch.tensor(x_test).to(device), torch.tensor(t_test).to(device)
-	x_test_ = torch.concat([(x_test.reshape(-1, 1)).float(), (t_test.reshape(-1, 1)).float()], dim=1)
-	u_ = PINN_RAR.predict(x_test_).cpu().detach().numpy()
-	plt.plot(x_test.cpu(), u_, 'r')
-	if t__ != 1:
-		plt.plot(X, U[:, int(t__ * N_t)], '--k')
-	else:
-		plt.plot(X, U[:, -1], '--k')
-plt.show()
 
 fig, ax = plt.subplots(dpi=300)
-ax.scatter(PINN_RAR.data[0][pts_collocation:,0], PINN_RAR.data[0][pts_collocation:,1])
+ax.scatter(PINN_RAR.data[0][-PINN_RAR.added_data:,0], PINN_RAR.data[0][-PINN_RAR.added_data:,1])
 ax.set_xlim(domain_bound[0])
 ax.set_ylim(domain_bound[1])
 plt.show()

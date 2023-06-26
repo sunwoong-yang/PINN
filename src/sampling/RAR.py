@@ -17,22 +17,22 @@ class RAR(PINN):
 	"""
 
 	# def __init__(self, PINN_model, N, m):
-	def __init__(self, N, m, sampling="Uniform"):
-		self.N = N
-		self.m = m
+	def __init__(self, tested_pts, added_pts, sampling="Uniform"):
+		self.tested_pts = tested_pts
+		self.added_pts = added_pts
 		self.sampling = sampling
 
 	def implement(self, PINN_reference):
 		if self.sampling == "Uniform":
-			test_data = Uniform(PINN_reference.domain_bound, self.N)
+			test_data = Uniform(PINN_reference.domain_bound, self.tested_pts)
 		elif self.sampling == "LHS":
-			test_data = LHS(PINN_reference.domain_bound, self.N)
+			test_data = LHS(PINN_reference.domain_bound, self.tested_pts)
 		else:
 			print("Improper sampling technique!!")
 
 		test_data = PINN_reference.array2tensor(test_data)
 		test_pde_loss = PINN_reference.cal_pde_loss(test_data).reshape(-1)
-		sort_idx = torch.argsort(test_pde_loss)[-self.m:]  # sort index of the top m pde_loss
+		sort_idx = torch.argsort(test_pde_loss)[-self.added_pts:]  # sort index of the top m pde_loss
 		new_data = test_data[sort_idx].cpu().detach().numpy()  # sort top m test_data w.r.t. pde_loss
 		original_data = copy.deepcopy(PINN_reference.data[0])
 		updated_data = np.vstack((original_data, new_data))  # add new_data to the previous self.data

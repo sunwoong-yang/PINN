@@ -20,14 +20,15 @@ class PINN:
         self.net = net
         self.domain_bound = domain_bound
         self.pde = pde
-        self.bcic = bcic[:][0] # functions for BC/IC
-        self.bcic_type = bcic[:][1] # Type of BC/IC
+        self.bcic = bcic[0] # functions for BC/IC
+        self.bcic_type = bcic[1] # Type of BC/IC
         self.bc_n = bc_n
         self.device = device
         self.epoch_cur = 0  # Current epoch
         # first component: weights for BC & second component: weights for IC
         self.weights = weights
         self.so_far_time = 0
+        self.added_data = 0
 
 
     # Train 메서드에 사용될 여러 준비 함수들을 여기서 정의함. (github line 337 참고)
@@ -43,7 +44,8 @@ class PINN:
         if loss == "MSE":
             self.loss = torch.nn.MSELoss(reduction='sum')  # For the current version, only MSE loss function
 
-    def train(self, epochs, L_BFGS=None, history=False, adaptive=None):
+    # def train(self, epochs=1000, L_BFGS=False, adaptive=None, history=1000):
+    def train(self, epochs=1000, L_BFGS=False, adaptive=None, history=False):
         """
         Train the PINN object
         :param L_BFGS: if not None, PINN object is trained by L_BFGS (max_iter is set as inputted integer)
@@ -53,10 +55,11 @@ class PINN:
 
         train_start_time = time.time()
 
-        if (adaptive is not None) and (epochs != 0):
+        if (adaptive is not None):
             adaptive.implement(self)  # 여기서 vanilla의 데이터가 바뀜
+            self.added_data += adaptive.added_pts
         # Optimizer step
-        if (L_BFGS is None) or (L_BFGS == 0):
+        if not L_BFGS:
             for epoch in range(1, epochs+1):
                 loss_final, loss_components = self.cal_loss()
                 self.optimizer.zero_grad()
@@ -67,9 +70,9 @@ class PINN:
                     if (epoch % history) == 0:
                         print(f"Epoch: {epoch}, Loss: {loss_final.item()}")
                     elif epoch == 1:
-                        print(f"First epoch loss: {loss_final.item()}")
+                        print(f"Initial loss: {loss_final.item()}")
         else:
-            LBFGS_optimizer = torch.optim.LBFGS(self.net.parameters(), lr=1, max_iter=L_BFGS)
+            LBFGS_optimizer = torch.optim.LBFGS(self.net.parameters(), lr=1, max_iter=epochs)
             LBFGS_losses = []
 
             def closure():
@@ -98,10 +101,10 @@ class PINN:
         loss_bc = torch.tensor(0., requires_grad=True)
         loss_ic = torch.tensor(0., requires_grad=True)
 
-        for pde_ in self.pde:
+        for pde in self.pde:
             # Add loss for each PDE (w.r.t collocation points)
             loss_pde = loss_pde + self.loss(
-                pde_(collocation, self.net(collocation)),
+                pde(collocation, self.net(collocation)),
                 pde_target_values.to(self.device)
             )
 
@@ -148,34 +151,15 @@ class PINN:
         # return Variable(torch.from_numpy(tensor_input).float(), requires_grad=requires_grad).to(self.device)
         return torch.tensor(tensor_input, requires_grad=requires_grad).float().to(self.device)
 
-
     def cal_pde_loss(self, test_data):
         test_data.requires_grad_()
-        pde_loss = 0
         pde_target_values = torch.zeros((test_data.shape[0], 1))
         pde_loss_f = torch.nn.MSELoss(reduction='none')
-        for pde_ in self.pde:
-            pde_loss += pde_loss_f(pde_(test_data, self.net(test_data)), pde_target_values.to(self.device))
+        pde_loss = 0
+        for pde in self.pde:
+            pde_loss += pde_loss_f(
+                pde(test_data, self.net(test_data)),
+                pde_target_values.to(self.device)
+            )
         return pde_loss
-
-    # def tensor2var(self, tensor_input, requires_grad=True):
-    #     # return Variable(tensor_input.float(), requires_grad=requires_grad).to(self.device)
-    #     return torch.tensor(tensor_input, requires_grad=requires_grad).float().to(self.device)
-
-    # def RAR(self, m):
-    #     """
-    #     Residual-based Adaptive Refinement (RAR)
-    #     ref: Yu, J., Lu, L., Meng, X., & Karniadakis, G. E. (2022). Gradient-enhanced physics-informed neural networks for forward and inverse PDE problems. Computer Methods in Applied Mechanics and Engineering, 393, 114823.
-    #     :param m: number of points to be added into the previous self.data
-    #     :return: None
-    #     """
-    #
-    #     test_data = LHS(self.domain_bound)
-    #     test_pde_loss = self.cal_pde_loss(test_data)
-    #     sort_idx = torch.argsort(test_pde_loss)[-m:] # sort index of the top m pde_loss
-    #     new_data = test_data[sort_idx] # sort top m test_data w.r.t. pde_loss
-    #     new_data = self.array2tensor(new_data)
-    #     self.data[0] = torch.vstack((self.data[0], new_data)) # add new_data to the previous self.data
-
-
 
